@@ -1,18 +1,19 @@
-# app-privacy-report-dashboard
-
 # App Privacy Report Dashboard (NDJSON)
 
 A **single‑file, client‑side dashboard** for exploring Apple’s *App Privacy Report* exports (`.ndjson`).
 All parsing and analysis happens **locally in your browser** — no uploads, no servers, no tracking.
 
----
+# App Privacy Report Dashboard (NDJSON)
+
+A **single-file, client-side dashboard** for exploring Apple’s *App Privacy Report* exports (`.ndjson`).
+All parsing and analysis happens **locally in your browser** — no uploads, no servers, no tracking.
 
 ## What this dashboard does
 
-This dashboard parses Apple’s exported **App Privacy Report NDJSON** and surfaces meaningful, human‑readable statistics about:
+This dashboard parses Apple’s exported **App Privacy Report NDJSON** and surfaces meaningful, human-readable statistics about:
 
 * 🌐 **Network activity** (domains, owners, apps)
-* 🕸️ **Website network activity** (in‑app web browsing)
+* 🕸️ **Website network activity** (in-app web browsing)
 * 📡 **Sensor & data access** (Location, Camera, Microphone, etc.)
 * 🧭 **Location access ranking** (most important privacy signal)
 
@@ -22,14 +23,12 @@ It is designed to be:
 * **Defensive** (handles schema drift across iOS versions)
 * **Auditable** (simple JS, no dependencies)
 
----
-
 ## Supported input
 
 ### File type
 
-* Apple‑exported **App Privacy Report**
-* File extension: `.ndjson` (newline‑delimited JSON)
+* Apple-exported **App Privacy Report**
+* File extension: `.ndjson` (newline-delimited JSON)
 
 Each line must be a standalone JSON object.
 
@@ -39,241 +38,130 @@ The parser recognizes and processes the following:
 
 | Record type      | How it’s detected               | Meaning                                          |
 | ---------------- | ------------------------------- | ------------------------------------------------ |
-| Network activity | `type === "networkActivity"`    | Domains contacted by apps or in‑app content      |
-| TCC access       | `stream` contains `.stream.tcc` | Permission‑gated access (Contacts, Photos, etc.) |
+| Network activity | `type === "networkActivity"`    | Domains contacted by apps or in-app content      |
+| TCC access       | `stream` contains `.stream.tcc` | Permission-gated access (Contacts, Photos, etc.) |
 | Access records   | `type === "access"`             | Data & sensor access (Location, Camera, Mic…)    |
 
 Unknown records are ignored safely.
 
----
+## Dashboard sections
 
-## Dashboard sections (what each table means)
+### Most contacted domains
 
-### 1️⃣ Most contacted domains
-
-**What it shows**
 Domains ranked by **total network hits** across all apps.
 
-**Derived from**
+Derived from:
 
 * `type: "networkActivity"`
 * `domain`
 * `hits`
 
-**Columns**
+### Most contacted domain owners
 
-* Domain
-* Hits (sum)
-* Owner (via Apple attribution)
-* Top App (the app responsible for the most hits)
-
----
-
-### 2️⃣ Most contacted domain owners
-
-**What it shows**
 Organizations ranked by total network activity.
 
-**Derived from**
+Derived from:
 
 * `domainOwner`
 
-Useful for spotting:
+Useful for spotting analytics providers, ad networks, and CDNs.
 
-* analytics providers
-* ad networks
-* CDNs
+### Network activity by app (hits)
 
----
-
-### 3️⃣ Network activity by app (hits)
-
-**What it shows**
 Apps ranked by **total number of network hits**.
 
-**Good for**
+Useful for identifying chatty apps or background network usage.
 
-* identifying chatty apps
-* spotting background network usage
+### App network activity (unique domains)
 
----
-
-### 4️⃣ App network activity (apps that contact the most domains)
-
-**What it shows**
 Apps ranked by **unique domains contacted**, then by total hits.
 
 This is often more revealing than raw hit counts.
 
-**Why it matters**
+### Website network activity (in-app browsing)
 
-* 1 app contacting 5 domains ≠ 1 app contacting 200 domains
+Websites visited **inside apps**, inferred from the `context` field.
 
----
+The dashboard treats a context as a website if it looks like a domain and differs from the contacted domain.
 
-### 5️⃣ Website network activity (in‑app browsing)
+Apple does not explicitly label website activity in NDJSON, so this is a best-effort heuristic that closely matches the Settings UI.
 
-**What it shows**
-Websites visited **inside apps**, ranked by activity.
+### TCC data & sensor access by app
 
-**How it’s inferred**
+Apps ranked by **permission-gated access events**.
 
-* Uses `context` field from `networkActivity`
-* Treated as a website if it *looks like a domain* and differs from `domain`
-
-**Columns**
-
-* Website (context)
-* Records (number of related network records)
-* Total hits
-* Top contacted domain
-
-> ⚠️ Apple does not explicitly label “website network activity” in NDJSON. This is a **best‑effort heuristic** matching Apple’s UI.
-
----
-
-### 6️⃣ TCC data & sensor access by app
-
-**What it shows**
-Apps ranked by **number of permission‑gated access events**.
-
-**Derived from**
+Derived from:
 
 * `stream: com.apple.privacy.accounting.stream.tcc`
 
-Examples:
+Examples include Contacts, Photos, Bluetooth, and more.
 
-* Contacts
-* Photos
-* Bluetooth
+### Top TCC services
 
----
+Permission types ranked by access frequency.
 
-### 7️⃣ Top TCC services
+Helps explain *what kinds of data* are accessed most often overall.
 
-**What it shows**
-Which permissions are accessed most frequently.
+### Access categories (type: "access")
 
-Useful for understanding:
+Counts of Data & Sensor Access categories.
 
-* what kinds of data are accessed overall
-* which permissions dominate your device activity
-
----
-
-### 8️⃣ Top access categories (type: "access")
-
-**What it shows**
-Counts of **Data & Sensor Access** categories.
-
-**Derived from**
+Derived from records such as:
 
 ```json
-{
-  "type": "access",
-  "category": "location",
-  "accessor": { "identifier": "com.example.app" }
-}
+{"type":"access","category":"location","accessor":{"identifier":"com.example.app"}}
 ```
 
-Common categories:
+Common categories include location, camera, microphone, and motion.
 
-* location
-* camera
-* microphone
-* motion
+### Sensor access: Location
 
----
-
-### 9️⃣ Sensor access: Location (⭐ most important)
-
-**What it shows**
 Apps ranked by how often they access **location**.
 
-**Derived from**
+Derived from:
 
 * `type: "access"`
 * `category: "location"`
 
-**Why this matters**
-Location access is:
+This is the most important privacy signal surfaced by the dashboard.
 
-* high‑risk
-* often backgrounded
-* frequently overused
+### Context table
 
-This table makes it immediately obvious **which apps track location the most**.
-
----
-
-### 🔟 Context table
-
-**What it shows**
 Raw `context` values from network activity, ranked by hits.
 
-**Use case**
-
-* debugging
-* understanding how Apple is grouping in‑app activity
-
----
+Primarily useful for debugging and understanding Apple’s attribution model.
 
 ## Time window filtering
 
-You can filter results by:
+Results can be filtered by:
 
 * Last 7 days
 * Last 14 days
 * Last 30 days
 * All time (default)
 
-Filtering uses:
+Filtering uses the first valid timestamp among:
 
 * `timeStamp`
 * `timestamp`
 * `firstTimeStamp`
 
-If no timestamp exists, the record is included by default.
+If a record has no timestamp, it is included by default.
 
----
+## Parsing behavior
 
-## Parsing behavior & robustness
+* Files are parsed in **2,500-line chunks** to keep the UI responsive
+* UTF-8 BOM (`\uFEFF`) and NUL characters (`\u0000`) are stripped before parsing
+* Invalid JSON lines are skipped safely
+* Unknown record types are ignored without breaking the dashboard
 
-### Chunked parsing
+## Privacy
 
-* Parses files in chunks of **2,500 lines**
-* Prevents browser freezes
-* Shows live progress
+* Parsing happens entirely **in your browser**
+* No network requests are made
+* No data is stored or transmitted
 
-### BOM / hidden character handling
-
-Before parsing each line, the parser strips:
-
-* UTF‑8 BOM (`\uFEFF`)
-* NUL bytes (`\u0000`)
-
-This fixes a common Apple export issue.
-
-### Invalid / unknown lines
-
-* Invalid JSON lines are skipped
-* Unknown record types are ignored
-* Counts are surfaced in the UI
-
-No crashes, no partial renders.
-
----
-
-## Privacy & security
-
-* ✅ **100% local** parsing
-* ❌ No network requests
-* ❌ No analytics
-* ❌ No storage
-
-You can verify this by opening DevTools → Network tab.
-
----
+You can verify this via your browser’s Network tab.
 
 ## Browser compatibility
 
@@ -284,25 +172,22 @@ Tested on:
 * Firefox
 * Safari (macOS)
 
-Requires:
+Requires modern JavaScript (ES2020+) and the File API.
 
-* ES2020+
-* File API
-
----
-
-## Known limitations
+## Limitations
 
 * Website network activity is inferred heuristically
-* Access durations are not computed (intervalBegin / intervalEnd pairing not yet implemented)
-* Owner attribution depends on Apple’s `domainOwner` field
+* Access durations are not computed (interval pairing not implemented)
+* Domain owner attribution depends on Apple’s metadata
 
----
+## Future ideas
 
-## Suggested future enhancements
+* Location access duration (intervalBegin / intervalEnd pairing)
+* Foreground vs background location detection
+* Timeline visualizations
+* App-level drill-down views
+* CSV export of filtered results
 
-* ⏱️ Location access **duration** (interval pairing)
-* 🧠 Foreground vs background location detection
-* 📊 Timeline charts
-* 🔍 App‑level drill‑downs
-* 📁 Export filtered views to CSV
+## License
+
+MIT: use freely, attribution appreciated.
