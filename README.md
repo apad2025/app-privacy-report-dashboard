@@ -1,10 +1,5 @@
 # App Privacy Report Dashboard (NDJSON)
 
-A **single‑file, client‑side dashboard** for exploring Apple’s *App Privacy Report* exports (`.ndjson`).
-All parsing and analysis happens **locally in your browser** — no uploads, no servers, no tracking.
-
-# App Privacy Report Dashboard (NDJSON)
-
 A **single-file, client-side dashboard** for exploring Apple’s *App Privacy Report* exports (`.ndjson`).
 All parsing and analysis happens **locally in your browser** — no uploads, no servers, no tracking.
 
