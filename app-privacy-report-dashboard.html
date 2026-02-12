@@ -1,0 +1,812 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>App Privacy Report Dashboard (NDJSON)</title>
+  <style>
+    :root { --bg:#0b0f14; --card:#121824; --muted:#a9b4c2; --text:#e7eef8; --border:#233044; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background: var(--bg); color: var(--text); }
+
+    header {
+      padding: 20px 16px;
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      background: rgba(11,15,20,.92);
+      backdrop-filter: blur(10px);
+
+      /* sticky stacking fix */
+      z-index: 1000;
+      isolation: isolate;
+    }
+
+    h1 { margin: 0 0 8px 0; font-size: 18px; }
+    .row { display:flex; gap:12px; flex-wrap: wrap; align-items: center; }
+    .controls { display:flex; gap:10px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+    label { font-size: 12px; color: var(--muted); display:flex; gap:8px; align-items:center; }
+    input[type="number"], select {
+      background: var(--card); color: var(--text); border: 1px solid var(--border);
+      border-radius: 10px; padding: 8px 10px; outline: none;
+    }
+    input[type="file"] { color: var(--muted); }
+    main { padding: 16px; max-width: 1200px; margin: 0 auto; }
+    .grid { display:grid; grid-template-columns: repeat(12, 1fr); gap: 12px; }
+    .card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px;
+      box-shadow: 0 6px 24px rgba(0,0,0,.25);
+    }
+    .card h2 { margin: 0 0 10px 0; font-size: 14px; color: var(--muted); font-weight: 600; letter-spacing: .2px; }
+    .metric { font-size: 26px; font-weight: 700; margin-top: 2px; }
+    .sub { color: var(--muted); font-size: 12px; margin-top: 6px; }
+    .span-3 { grid-column: span 3; }
+    .span-4 { grid-column: span 4; }
+    .span-6 { grid-column: span 6; }
+    .span-12 { grid-column: span 12; }
+    @media (max-width: 900px) {
+      .span-3,.span-4,.span-6 { grid-column: span 12; }
+    }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 8px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+
+    /* sticky table headers (inside scroll containers) */
+    th {
+      text-align: left;
+      color: var(--muted);
+      font-weight: 600;
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: var(--card);
+    }
+
+    .pill {
+      display:inline-block; font-size: 12px; padding: 3px 8px; border-radius: 999px;
+      border: 1px solid var(--border); color: var(--muted);
+    }
+    .ok { color: #b7ffcf; }
+    .warn { color: #ffd7a8; }
+    .err { color: #ffb7b7; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+    .small { font-size: 12px; color: var(--muted); }
+    .footer { margin-top: 14px; color: var(--muted); font-size: 12px; }
+    .progress {
+      height: 8px; background: #0f141d; border: 1px solid var(--border); border-radius: 999px; overflow: hidden;
+    }
+    .bar { height: 100%; width: 0%; background: #2a7cff; }
+
+    /* ===== Scrollbar styling ===== */
+    /* Firefox */
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: #3a4a63 transparent;
+    }
+    /* Chromium / Safari */
+    *::-webkit-scrollbar { width: 10px; height: 10px; }
+    *::-webkit-scrollbar-track { background: transparent; }
+    *::-webkit-scrollbar-thumb {
+      background-color: #3a4a63;
+      border-radius: 999px;
+      border: 3px solid transparent;
+      background-clip: content-box;
+    }
+    *::-webkit-scrollbar-thumb:hover { background-color: #4f6385; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="row" style="justify-content: space-between;">
+      <div>
+        <h1>App Privacy Report Dashboard (NDJSON)</h1>
+        <div class="small">Upload Apple’s exported <span class="mono">.ndjson</span> to see network + data/sensor access stats (parsed locally in your browser).</div>
+      </div>
+      <div class="pill" id="statusPill">No file loaded</div>
+    </div>
+
+    <div class="controls">
+      <label>
+        NDJSON file:
+        <input id="fileInput" type="file" accept=".ndjson,.json,.txt" />
+      </label>
+
+      <label>
+        Time window:
+        <select id="daysSelect">
+          <option value="7">Last 7 days</option>
+          <option value="14">Last 14 days</option>
+          <option value="30">Last 30 days</option>
+          <option value="0" selected>All time in file</option>
+        </select>
+      </label>
+
+      <label>
+        Show Top:
+        <input id="topN" type="number" min="5" max="200" value="25" />
+      </label>
+
+      <button id="clearBtn" style="background:transparent;color:var(--text);border:1px solid var(--border);border-radius:10px;padding:8px 10px;cursor:pointer;">
+        Clear
+      </button>
+    </div>
+
+    <div style="margin-top:10px;">
+      <div class="progress" aria-label="parse progress"><div class="bar" id="progressBar"></div></div>
+      <div class="small" id="progressText" style="margin-top:6px;"></div>
+    </div>
+  </header>
+
+  <main>
+    <div class="grid">
+
+      <div class="card span-3">
+        <h2>Total NDJSON lines</h2>
+        <div class="metric" id="mLines">—</div>
+        <div class="sub" id="mLinesSub">—</div>
+      </div>
+
+      <div class="card span-3">
+        <h2>Network activity records</h2>
+        <div class="metric" id="mNet">—</div>
+        <div class="sub" id="mNetSub">—</div>
+      </div>
+
+      <div class="card span-3">
+        <h2>TCC access events</h2>
+        <div class="metric" id="mTcc">—</div>
+        <div class="sub" id="mTccSub">—</div>
+      </div>
+
+      <div class="card span-3">
+        <h2>Unique apps (bundleID)</h2>
+        <div class="metric" id="mApps">—</div>
+        <div class="sub" id="mAppsSub">—</div>
+      </div>
+
+      <div class="card span-6">
+        <h2>Most contacted domains (sum of hits)</h2>
+        <div style="max-height: 420px; overflow:auto;">
+          <table>
+            <thead>
+              <tr><th>Domain</th><th>Hits</th><th>Owner</th><th>Top App</th></tr>
+            </thead>
+            <tbody id="tblDomains"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card span-6">
+        <h2>Most contacted domain owners (sum of hits)</h2>
+        <div style="max-height: 420px; overflow:auto;">
+          <table>
+            <thead>
+              <tr><th>Owner</th><th>Hits</th><th>Top Domain</th></tr>
+            </thead>
+            <tbody id="tblOwners"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card span-6">
+        <h2>Network activity by app (sum of hits)</h2>
+        <div style="max-height: 420px; overflow:auto;">
+          <table>
+            <thead>
+              <tr><th>App (bundleID)</th><th>Hits</th><th>Top Domain</th></tr>
+            </thead>
+            <tbody id="tblAppsNet"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card span-6">
+        <h2>App network activity (apps that contact the most domains)</h2>
+        <div class="small">Ranks apps by <b>unique domains contacted</b> (then by total hits).</div>
+        <div style="max-height: 420px; overflow:auto; margin-top: 8px;">
+          <table>
+            <thead>
+              <tr><th>App (bundleID)</th><th>Unique domains</th><th>Total hits</th><th>Top domain</th></tr>
+            </thead>
+            <tbody id="tblAppsMostDomains"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card span-6">
+        <h2>Website network activity (domains contacted by website)</h2>
+        <div class="small">Uses <span class="mono">context</span> as the website you visited inside an app (best-effort).</div>
+        <div style="max-height: 420px; overflow:auto; margin-top: 8px;">
+          <table>
+            <thead>
+              <tr><th>Website (context)</th><th>Records</th><th>Total hits</th><th>Top contacted domain</th></tr>
+            </thead>
+            <tbody id="tblWebsiteActivity"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card span-6">
+        <h2>TCC data/sensor access by app (event count)</h2>
+        <div style="max-height: 420px; overflow:auto;">
+          <table>
+            <thead>
+              <tr><th>App (bundleID)</th><th>Access events</th><th>Top Service</th></tr>
+            </thead>
+            <tbody id="tblAppsTcc"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card span-6">
+        <h2>Top TCC services (event count)</h2>
+        <div style="max-height: 420px; overflow:auto;">
+          <table>
+            <thead>
+              <tr><th>tccService</th><th>Events</th><th>Top App</th></tr>
+            </thead>
+            <tbody id="tblTcc"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card span-6">
+        <h2>Top access categories (type: "access")</h2>
+        <div class="small">These are Data & Sensor Access records like <span class="mono">{"type":"access","category":"location","kind":"intervalBegin"}</span>.</div>
+        <div style="max-height: 420px; overflow:auto; margin-top: 8px;">
+          <table>
+            <thead>
+              <tr><th>Category</th><th>Events</th><th>Top App</th></tr>
+            </thead>
+            <tbody id="tblAccessCats"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card span-6">
+        <h2>Sensor access: Location (apps ranked by how often they access location)</h2>
+        <div class="small">Counts <span class="mono">type:"access"</span> records where <span class="mono">category:"location"</span>.</div>
+        <div style="max-height: 420px; overflow:auto; margin-top: 8px;">
+          <table>
+            <thead>
+              <tr><th>App (bundleID)</th><th>Location access events</th><th>Share of location events</th></tr>
+            </thead>
+            <tbody id="tblLocationByApp"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card span-6">
+        <h2>Top contexts (networkActivity “context”)</h2>
+        <div class="small">Context is optional and can hint when requests are tied to in-app content (e.g., a website name).</div>
+        <div style="max-height: 420px; overflow:auto; margin-top: 8px;">
+          <table>
+            <thead>
+              <tr><th>Context</th><th>Hits</th><th>Top Domain</th></tr>
+            </thead>
+            <tbody id="tblCtx"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card span-12">
+        <h2>Notes</h2>
+        <ul class="small" style="margin:0; padding-left: 18px;">
+          <li>NDJSON is parsed <b>locally</b> in your browser; nothing is uploaded.</li>
+          <li>Network records typically contain <span class="mono">type: "networkActivity"</span>, <span class="mono">domain</span>, <span class="mono">hits</span>, and <span class="mono">bundleID</span>.</li>
+          <li>TCC records often contain <span class="mono">stream: "com.apple.privacy.accounting.stream.tcc"</span> and <span class="mono">tccService</span>.</li>
+          <li>Access records contain <span class="mono">type: "access"</span> with <span class="mono">category</span> and <span class="mono">accessor.identifier</span>.</li>
+          <li>“Website network activity” is inferred from <span class="mono">context</span> (best-effort) and may vary by report version.</li>
+        </ul>
+        <div class="footer" id="fileMeta"></div>
+      </div>
+
+    </div>
+  </main>
+
+<script>
+(() => {
+  const el = (id) => document.getElementById(id);
+
+  const statusPill = el('statusPill');
+  const fileInput = el('fileInput');
+  const daysSelect = el('daysSelect');
+  const topNInput = el('topN');
+  const clearBtn = el('clearBtn');
+  const progressBar = el('progressBar');
+  const progressText = el('progressText');
+
+  const mLines = el('mLines');
+  const mNet = el('mNet');
+  const mTcc = el('mTcc');
+  const mApps = el('mApps');
+  const mLinesSub = el('mLinesSub');
+  const mNetSub = el('mNetSub');
+  const mTccSub = el('mTccSub');
+  const mAppsSub = el('mAppsSub');
+
+  const tblDomains = el('tblDomains');
+  const tblOwners = el('tblOwners');
+  const tblAppsNet = el('tblAppsNet');
+  const tblAppsMostDomains = el('tblAppsMostDomains');
+  const tblWebsiteActivity = el('tblWebsiteActivity');
+  const tblAppsTcc = el('tblAppsTcc');
+  const tblTcc = el('tblTcc');
+  const tblAccessCats = el('tblAccessCats');
+  const tblLocationByApp = el('tblLocationByApp');
+  const tblCtx = el('tblCtx');
+
+  const fileMeta = el('fileMeta');
+
+  let rawLines = [];
+  let parsed = null;
+
+  function resetUI() {
+    rawLines = [];
+    parsed = null;
+    statusPill.textContent = 'No file loaded';
+    statusPill.className = 'pill';
+    progressBar.style.width = '0%';
+    progressText.textContent = '';
+
+    [mLines, mNet, mTcc, mApps].forEach(x => x.textContent = '—');
+    [mLinesSub, mNetSub, mTccSub, mAppsSub].forEach(x => x.textContent = '—');
+    [
+      tblDomains, tblOwners, tblAppsNet, tblAppsMostDomains, tblWebsiteActivity,
+      tblAppsTcc, tblTcc, tblAccessCats, tblLocationByApp, tblCtx
+    ].forEach(t => t.innerHTML = '');
+    fileMeta.textContent = '';
+  }
+
+  function setStatus(kind, text) {
+    statusPill.textContent = text;
+    statusPill.className = 'pill ' + (kind === 'ok' ? 'ok' : kind === 'warn' ? 'warn' : kind === 'err' ? 'err' : '');
+  }
+
+  function parseTime(ts) {
+    if (!ts || typeof ts !== 'string') return null;
+    const d = new Date(ts);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  function withinWindow(d, windowDays) {
+    if (!d) return false;
+    if (!windowDays || windowDays <= 0) return true;
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - windowDays * 24 * 60 * 60 * 1000);
+    return d >= cutoff && d <= now;
+  }
+
+  function inc(map, key, by=1) {
+    if (!key) return;
+    map.set(key, (map.get(key) || 0) + by);
+  }
+
+  function topEntries(map, n) {
+    return [...map.entries()].sort((a,b)=>b[1]-a[1]).slice(0, n);
+  }
+
+  function safeText(s) {
+    return (s === null || s === undefined) ? '' : String(s);
+  }
+
+  function renderTableRows(tbody, rows, cols) {
+    tbody.innerHTML = rows.map(r => {
+      const tds = cols.map(c => `<td>${safeText(typeof c === 'function' ? c(r) : r[c])}</td>`).join('');
+      return `<tr>${tds}</tr>`;
+    }).join('');
+  }
+
+  function isAccessRecord(obj) {
+    return obj && obj.type === 'access' && obj.accessor && typeof obj.accessor.identifier === 'string';
+  }
+
+  function looksLikeDomain(s) {
+    if (!s || typeof s !== 'string') return false;
+    const t = s.trim().toLowerCase();
+    if (!t) return false;
+    if (t.includes(' ') || t.includes('/') || t.includes(':')) return false;
+    return t.includes('.') && t.length >= 4;
+  }
+
+  function compute(parsedLines, windowDays) {
+    // Network aggregations
+    const domainsHits = new Map();
+    const ownersHits = new Map();
+    const appsNetHits = new Map();
+    const ctxHits = new Map();
+
+    const domainTopApp = new Map();
+    const ownerTopDomain = new Map();
+    const appTopDomain = new Map();
+    const ctxTopDomain = new Map();
+
+    // App network: unique domains per app
+    const appDomainSets = new Map();     // app -> Set(domains)
+    const appNetTotalHits = new Map();   // app -> total hits (networkActivity)
+
+    // Website network activity: group by context (best-effort)
+    const websiteRecords = new Map();
+    const websiteHits = new Map();
+    const websiteTopDomain = new Map();  // website -> {domain, hits}
+    const websiteDomainHits = new Map(); // website -> Map(domain -> hits)
+
+    // TCC aggregations
+    const appsTccEvents = new Map();
+    const tccServiceEvents = new Map();
+    const tccServiceTopApp = new Map();
+    const appTopService = new Map();
+
+    // Access (type:"access") aggregations
+    const accessCategoryEvents = new Map();
+    const accessCatTopApp = new Map();
+    const appsAccessEvents = new Map();
+
+    // Location access ranking
+    const appLocationAccess = new Map();
+    let totalLocationAccess = 0;
+
+    const uniqueApps = new Set();
+    let netCount = 0;
+    let tccCount = 0;
+    let accessCount = 0;
+    let skipped = 0;
+
+    for (const obj of parsedLines) {
+      const ts = parseTime(obj.timeStamp || obj.timestamp || obj.firstTimeStamp);
+      if (windowDays > 0 && ts && !withinWindow(ts, windowDays)) continue;
+
+      // Network activity
+      if (obj && obj.type === 'networkActivity') {
+        netCount++;
+        const hits = Number(obj.hits ?? 1);
+        const h = isFinite(hits) ? hits : 1;
+
+        const domain = safeText(obj.domain).trim();
+        const owner = safeText(obj.domainOwner).trim() || '(unknown owner)';
+        const app = safeText(obj.bundleID).trim() || '(unknown bundleID)';
+        const ctx = safeText(obj.context).trim() || '';
+
+        uniqueApps.add(app);
+
+        if (domain) inc(domainsHits, domain, h);
+        inc(ownersHits, owner, h);
+        inc(appsNetHits, app, h);
+        if (ctx) inc(ctxHits, ctx, h);
+
+        // App network unique domain sets
+        if (!appDomainSets.has(app)) appDomainSets.set(app, new Set());
+        if (domain) appDomainSets.get(app).add(domain);
+        inc(appNetTotalHits, app, h);
+
+        // Website network activity inferred from context
+        const ctxIsWebsite = ctx && looksLikeDomain(ctx) && ctx !== domain;
+        if (ctxIsWebsite && domain) {
+          inc(websiteRecords, ctx, 1);
+          inc(websiteHits, ctx, h);
+
+          if (!websiteDomainHits.has(ctx)) websiteDomainHits.set(ctx, new Map());
+          const dm = websiteDomainHits.get(ctx);
+          dm.set(domain, (dm.get(domain) || 0) + h);
+
+          const cur = websiteTopDomain.get(ctx) || { domain: '', hits: 0 };
+          const nextHits = dm.get(domain);
+          if (nextHits >= cur.hits) websiteTopDomain.set(ctx, { domain, hits: nextHits });
+        }
+
+        // Top domain per app
+        if (app && domain) {
+          const cur = appTopDomain.get(app) || { domain: '', hits: 0 };
+          const curHits = cur.domain === domain ? cur.hits : 0;
+          const next = curHits + h;
+          if (next >= cur.hits) appTopDomain.set(app, { domain, hits: next });
+        }
+
+        // Top app per domain
+        if (domain) {
+          const cur = domainTopApp.get(domain) || { app: '', hits: 0 };
+          const nextHits = (cur.app === app ? cur.hits : 0) + h;
+          if (nextHits >= cur.hits) domainTopApp.set(domain, { app, hits: nextHits });
+        }
+
+        // Top domain per owner
+        if (owner && domain) {
+          const cur = ownerTopDomain.get(owner) || { domain: '', hits: 0 };
+          const curHits = cur.domain === domain ? cur.hits : 0;
+          const next = curHits + h;
+          if (next >= cur.hits) ownerTopDomain.set(owner, { domain, hits: next });
+        }
+
+        // Top domain per context
+        if (ctx && domain) {
+          const cur = ctxTopDomain.get(ctx) || { domain: '', hits: 0 };
+          const curHits = cur.domain === domain ? cur.hits : 0;
+          const next = curHits + h;
+          if (next >= cur.hits) ctxTopDomain.set(ctx, { domain, hits: next });
+        }
+
+        continue;
+      }
+
+      // Access records
+      if (isAccessRecord(obj)) {
+        accessCount++;
+        const app = safeText(obj.accessor?.identifier).trim() || '(unknown bundleID)';
+        const category = safeText(obj.category).trim() || '(unknown category)';
+
+        uniqueApps.add(app);
+
+        inc(appsAccessEvents, app, 1);
+        inc(accessCategoryEvents, category, 1);
+
+        const cur = accessCatTopApp.get(category) || { app: '', count: 0 };
+        const next = (cur.app === app ? cur.count : 0) + 1;
+        if (next >= cur.count) accessCatTopApp.set(category, { app, count: next });
+
+        // Location ranking
+        if (category === 'location') {
+          inc(appLocationAccess, app, 1);
+          totalLocationAccess += 1;
+        }
+
+        continue;
+      }
+
+      // TCC event stream
+      const isTcc = obj && typeof obj.stream === 'string' && obj.stream.includes('.stream.tcc');
+      if (isTcc) {
+        tccCount++;
+        const app = safeText(obj?.accessor?.identifier).trim() || safeText(obj.bundleID).trim() || '(unknown bundleID)';
+        const svc = safeText(obj.tccService).trim() || '(unknown tccService)';
+
+        uniqueApps.add(app);
+
+        inc(appsTccEvents, app, 1);
+        inc(tccServiceEvents, svc, 1);
+
+        const curA = tccServiceTopApp.get(svc) || { app: '', count: 0 };
+        const nextA = (curA.app === app ? curA.count : 0) + 1;
+        if (nextA >= curA.count) tccServiceTopApp.set(svc, { app, count: nextA });
+
+        const curS = appTopService.get(app) || { service: '', count: 0 };
+        const nextS = (curS.service === svc ? curS.count : 0) + 1;
+        if (nextS >= curS.count) appTopService.set(app, { service: svc, count: nextS });
+
+        continue;
+      }
+
+      skipped++;
+    }
+
+    return {
+      netCount, tccCount, accessCount, skipped,
+      uniqueApps,
+      domainsHits, ownersHits, appsNetHits, ctxHits,
+      domainTopApp, ownerTopDomain, appTopDomain, ctxTopDomain,
+      appDomainSets, appNetTotalHits,
+      websiteRecords, websiteHits, websiteTopDomain,
+      appsTccEvents, tccServiceEvents, tccServiceTopApp, appTopService,
+      accessCategoryEvents, accessCatTopApp, appsAccessEvents,
+      appLocationAccess, totalLocationAccess
+    };
+  }
+
+  function refresh() {
+    if (!parsed) return;
+    const windowDays = Number(daysSelect.value);
+    const topN = Math.max(5, Math.min(200, Number(topNInput.value || 25)));
+
+    const res = compute(parsed, windowDays);
+
+    mLines.textContent = rawLines.length.toLocaleString();
+    mLinesSub.textContent = `Parsed JSON objects: ${parsed.length.toLocaleString()}`;
+
+    mNet.textContent = res.netCount.toLocaleString();
+    mNetSub.textContent = `Unknown/other records ignored: ${res.skipped.toLocaleString()}`;
+
+    mTcc.textContent = res.tccCount.toLocaleString();
+    mTccSub.textContent = `Top window: ${windowDays > 0 ? ('last ' + windowDays + ' days') : 'all time in file'} • access records: ${res.accessCount.toLocaleString()}`;
+
+    mApps.textContent = res.uniqueApps.size.toLocaleString();
+    mAppsSub.textContent = `Apps seen in net, TCC, or access records`;
+
+    // Most contacted domains
+    const topDomains = topEntries(res.domainsHits, topN).map(([domain, hits]) => {
+      const topApp = res.domainTopApp.get(domain)?.app || '';
+      return { domain, hits, owner: '(see Owners table)', topApp };
+    });
+    renderTableRows(tblDomains, topDomains, [
+      r => `<span class="mono">${safeText(r.domain)}</span>`,
+      r => safeText(r.hits.toLocaleString()),
+      r => safeText(r.owner),
+      r => `<span class="mono">${safeText(r.topApp)}</span>`
+    ]);
+
+    // Most contacted owners
+    const topOwners = topEntries(res.ownersHits, topN).map(([owner, hits]) => {
+      const td = res.ownerTopDomain.get(owner)?.domain || '';
+      return { owner, hits, topDomain: td };
+    });
+    renderTableRows(tblOwners, topOwners, [
+      r => safeText(r.owner),
+      r => safeText(r.hits.toLocaleString()),
+      r => `<span class="mono">${safeText(r.topDomain)}</span>`
+    ]);
+
+    // Network activity by app (hits)
+    const topAppsNet = topEntries(res.appsNetHits, topN).map(([app, hits]) => {
+      const td = res.appTopDomain.get(app)?.domain || '';
+      return { app, hits, topDomain: td };
+    });
+    renderTableRows(tblAppsNet, topAppsNet, [
+      r => `<span class="mono">${safeText(r.app)}</span>`,
+      r => safeText(r.hits.toLocaleString()),
+      r => `<span class="mono">${safeText(r.topDomain)}</span>`
+    ]);
+
+    // App network activity: apps contacting most unique domains
+    const appsMostDomains = [...res.appDomainSets.entries()]
+      .map(([app, set]) => ({
+        app,
+        uniqueDomains: set.size,
+        hits: res.appNetTotalHits.get(app) || 0,
+        topDomain: res.appTopDomain.get(app)?.domain || ''
+      }))
+      .sort((a, b) => (b.uniqueDomains - a.uniqueDomains) || (b.hits - a.hits))
+      .slice(0, topN);
+
+    renderTableRows(tblAppsMostDomains, appsMostDomains, [
+      r => `<span class="mono">${safeText(r.app)}</span>`,
+      r => safeText(r.uniqueDomains.toLocaleString()),
+      r => safeText(r.hits.toLocaleString()),
+      r => `<span class="mono">${safeText(r.topDomain)}</span>`
+    ]);
+
+    // Website network activity (inferred)
+    const websites = [...res.websiteRecords.entries()]
+      .map(([website, records]) => ({
+        website,
+        records,
+        hits: res.websiteHits.get(website) || 0,
+        topDomain: res.websiteTopDomain.get(website)?.domain || ''
+      }))
+      .sort((a, b) => (b.records - a.records) || (b.hits - a.hits))
+      .slice(0, topN);
+
+    renderTableRows(tblWebsiteActivity, websites, [
+      r => `<span class="mono">${safeText(r.website)}</span>`,
+      r => safeText(r.records.toLocaleString()),
+      r => safeText(r.hits.toLocaleString()),
+      r => `<span class="mono">${safeText(r.topDomain)}</span>`
+    ]);
+
+    // Apps TCC
+    const topAppsTcc = topEntries(res.appsTccEvents, topN).map(([app, count]) => {
+      const svc = res.appTopService.get(app)?.service || '';
+      return { app, count, topService: svc };
+    });
+    renderTableRows(tblAppsTcc, topAppsTcc, [
+      r => `<span class="mono">${safeText(r.app)}</span>`,
+      r => safeText(r.count.toLocaleString()),
+      r => `<span class="mono">${safeText(r.topService)}</span>`
+    ]);
+
+    // TCC services
+    const topSvc = topEntries(res.tccServiceEvents, topN).map(([svc, count]) => {
+      const app = res.tccServiceTopApp.get(svc)?.app || '';
+      return { svc, count, topApp: app };
+    });
+    renderTableRows(tblTcc, topSvc, [
+      r => `<span class="mono">${safeText(r.svc)}</span>`,
+      r => safeText(r.count.toLocaleString()),
+      r => `<span class="mono">${safeText(r.topApp)}</span>`
+    ]);
+
+    // Access categories
+    const topAccessCats = topEntries(res.accessCategoryEvents, topN).map(([cat, count]) => {
+      const topApp = res.accessCatTopApp.get(cat)?.app || '';
+      return { cat, count, topApp };
+    });
+    renderTableRows(tblAccessCats, topAccessCats, [
+      r => safeText(r.cat),
+      r => safeText(r.count.toLocaleString()),
+      r => `<span class="mono">${safeText(r.topApp)}</span>`
+    ]);
+
+    // Location access by app
+    const totalLoc = res.totalLocationAccess || 0;
+    const locApps = [...res.appLocationAccess.entries()]
+      .map(([app, count]) => ({
+        app,
+        count,
+        share: totalLoc > 0 ? (count / totalLoc) : 0
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, topN);
+
+    renderTableRows(tblLocationByApp, locApps, [
+      r => `<span class="mono">${safeText(r.app)}</span>`,
+      r => safeText(r.count.toLocaleString()),
+      r => totalLoc > 0 ? `${(r.share * 100).toFixed(1)}%` : '—'
+    ]);
+
+    // Context
+    const topCtx = topEntries(res.ctxHits, topN).map(([ctx, hits]) => {
+      const d = res.ctxTopDomain.get(ctx)?.domain || '';
+      return { ctx, hits, topDomain: d };
+    });
+    renderTableRows(tblCtx, topCtx, [
+      r => safeText(r.ctx),
+      r => safeText(r.hits.toLocaleString()),
+      r => `<span class="mono">${safeText(r.topDomain)}</span>`
+    ]);
+  }
+
+  async function readFile(file) {
+    resetUI();
+    setStatus('warn', 'Loading…');
+    fileMeta.textContent = `${file.name} • ${(file.size/1024/1024).toFixed(2)} MB`;
+
+    const text = await file.text();
+    rawLines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+
+    const objs = [];
+    let bad = 0;
+    const total = rawLines.length;
+    const CHUNK = 2500;
+
+    for (let i = 0; i < total; i += CHUNK) {
+      const end = Math.min(total, i + CHUNK);
+      for (let j = i; j < end; j++) {
+        const line = rawLines[j];
+        const cleaned = line.replace(/^\uFEFF/, "").replace(/\u0000/g, "");
+        try {
+          objs.push(JSON.parse(cleaned));
+        } catch (e) {
+          bad++;
+        }
+      }
+      const pct = Math.round((end / total) * 100);
+      progressBar.style.width = pct + '%';
+      progressText.textContent = `Parsing… ${end.toLocaleString()} / ${total.toLocaleString()} lines (${pct}%). Invalid JSON lines skipped: ${bad.toLocaleString()}`;
+      await new Promise(r => setTimeout(r, 0));
+    }
+
+    parsed = objs;
+
+    if (parsed.length === 0) {
+      setStatus('err', 'No valid JSON lines found');
+      progressText.textContent += ' — Make sure this is the exported App Privacy Report NDJSON.';
+      return;
+    }
+
+    setStatus('ok', 'Loaded ✓');
+    progressText.textContent = `Loaded ${parsed.length.toLocaleString()} objects from ${total.toLocaleString()} lines. Invalid JSON lines skipped: ${bad.toLocaleString()}.`;
+    refresh();
+  }
+
+  fileInput.addEventListener('change', (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    readFile(f).catch(err => {
+      console.error(err);
+      setStatus('err', 'Error loading file');
+      progressText.textContent = String(err);
+    });
+  });
+
+  daysSelect.addEventListener('change', refresh);
+  topNInput.addEventListener('input', () => {
+    clearTimeout(topNInput._t);
+    topNInput._t = setTimeout(refresh, 150);
+  });
+
+  clearBtn.addEventListener('click', () => {
+    fileInput.value = '';
+    resetUI();
+  });
+
+  resetUI();
+})();
+</script>
+</body>
+</html>
