@@ -99,7 +99,7 @@
     <div class="row" style="justify-content: space-between;">
       <div>
         <h1>App Privacy Report Dashboard (NDJSON)</h1>
-        <div class="small">Upload Apple’s exported <span class="mono">.ndjson</span> to see network + data/sensor access stats (parsed locally in your browser).</div>
+        <div class="small">Load Apple’s exported <span class="mono">App_Privacy_Report_*.ndjson</span> file to inspect app network calls and data/sensor access. Parsing runs fully in your browser.</div>
       </div>
       <div class="pill" id="statusPill">No file loaded</div>
     </div>
@@ -138,6 +138,15 @@
 
   <main>
     <div class="grid">
+      <div class="card span-12">
+        <h2>Start Here</h2>
+        <div class="small">Export from iPhone/iPad: <span class="mono">Settings &gt; Privacy &amp; Security &gt; App Privacy Report &gt; Export App Privacy Report</span>.</div>
+        <ul class="small" style="margin:8px 0 0 0; padding-left: 18px;">
+          <li>This dashboard recognizes three common line types in Apple reports: <span class="mono">type:"networkActivity"</span>, <span class="mono">type:"access"</span>, and TCC permission stream lines (<span class="mono">stream:*tcc</span>).</li>
+          <li>Counts use Apple’s <span class="mono">hits</span> field when present (request count, not bytes transferred).</li>
+          <li>Apps are identified by <span class="mono">bundleID</span> values because app display names are not included in the NDJSON export.</li>
+        </ul>
+      </div>
 
       <div class="card span-3">
         <h2>Total NDJSON lines</h2>
@@ -146,13 +155,13 @@
       </div>
 
       <div class="card span-3">
-        <h2>Network activity records</h2>
+        <h2>Network activity lines</h2>
         <div class="metric" id="mNet">—</div>
         <div class="sub" id="mNetSub">—</div>
       </div>
 
       <div class="card span-3">
-        <h2>TCC access events</h2>
+        <h2>Data/sensor + TCC lines</h2>
         <div class="metric" id="mTcc">—</div>
         <div class="sub" id="mTccSub">—</div>
       </div>
@@ -161,6 +170,19 @@
         <h2>Unique apps (bundleID)</h2>
         <div class="metric" id="mApps">—</div>
         <div class="sub" id="mAppsSub">—</div>
+      </div>
+
+      <div class="card span-12">
+        <h2>Detected Record Types In This File</h2>
+        <div class="small">If "Other/unknown" is high, the file may include report variants this viewer does not classify yet.</div>
+        <div style="max-height: 280px; overflow:auto; margin-top: 8px;">
+          <table>
+            <thead>
+              <tr><th>Line classification</th><th>Count</th><th>Share of parsed lines</th><th>Typical fields</th></tr>
+            </thead>
+            <tbody id="tblRecordTypes"></tbody>
+          </table>
+        </div>
       </div>
 
       <div class="card span-6">
@@ -289,12 +311,12 @@
       </div>
 
       <div class="card span-12">
-        <h2>Notes</h2>
+        <h2>Interpretation Notes</h2>
         <ul class="small" style="margin:0; padding-left: 18px;">
           <li>NDJSON is parsed <b>locally</b> in your browser; nothing is uploaded.</li>
-          <li>Network records typically contain <span class="mono">type: "networkActivity"</span>, <span class="mono">domain</span>, <span class="mono">hits</span>, and <span class="mono">bundleID</span>.</li>
-          <li>TCC records often contain <span class="mono">stream: "com.apple.privacy.accounting.stream.tcc"</span> and <span class="mono">tccService</span>.</li>
-          <li>Access records contain <span class="mono">type: "access"</span> with <span class="mono">category</span> and <span class="mono">accessor.identifier</span>.</li>
+          <li>Network lines usually include <span class="mono">type:"networkActivity"</span>, <span class="mono">domain</span>, <span class="mono">hits</span>, <span class="mono">bundleID</span>, and optional <span class="mono">context</span>.</li>
+          <li>TCC lines usually include <span class="mono">stream:*tcc</span>, <span class="mono">tccService</span>, and app id in <span class="mono">accessor.identifier</span> or <span class="mono">bundleID</span>.</li>
+          <li>Data &amp; Sensor lines include <span class="mono">type:"access"</span> with <span class="mono">category</span>, <span class="mono">kind</span>, and <span class="mono">accessor.identifier</span>.</li>
           <li>“Website network activity” is inferred from <span class="mono">context</span> (best-effort) and may vary by report version.</li>
         </ul>
         <div class="footer" id="fileMeta"></div>
@@ -327,6 +349,7 @@
   const tblDomains = el('tblDomains');
   const tblOwners = el('tblOwners');
   const tblAppsNet = el('tblAppsNet');
+  const tblRecordTypes = el('tblRecordTypes');
   const tblAppsMostDomains = el('tblAppsMostDomains');
   const tblWebsiteActivity = el('tblWebsiteActivity');
   const tblAppsTcc = el('tblAppsTcc');
@@ -351,7 +374,7 @@
     [mLines, mNet, mTcc, mApps].forEach(x => x.textContent = '—');
     [mLinesSub, mNetSub, mTccSub, mAppsSub].forEach(x => x.textContent = '—');
     [
-      tblDomains, tblOwners, tblAppsNet, tblAppsMostDomains, tblWebsiteActivity,
+      tblDomains, tblOwners, tblAppsNet, tblRecordTypes, tblAppsMostDomains, tblWebsiteActivity,
       tblAppsTcc, tblTcc, tblAccessCats, tblLocationByApp, tblCtx
     ].forEach(t => t.innerHTML = '');
     fileMeta.textContent = '';
@@ -379,6 +402,56 @@
   function inc(map, key, by=1) {
     if (!key) return;
     map.set(key, (map.get(key) || 0) + by);
+  }
+
+  function incNested(map, keyA, keyB, by = 1) {
+    if (!keyA || !keyB) return;
+    if (!map.has(keyA)) map.set(keyA, new Map());
+    const inner = map.get(keyA);
+    inner.set(keyB, (inner.get(keyB) || 0) + by);
+  }
+
+  function topEntryFromMap(map) {
+    let bestKey = '';
+    let bestCount = 0;
+    for (const [key, count] of map.entries()) {
+      if (count >= bestCount) {
+        bestKey = key;
+        bestCount = count;
+      }
+    }
+    return { key: bestKey, count: bestCount };
+  }
+
+  function tccServiceLabel(svc) {
+    const labels = {
+      kTCCServiceCamera: 'Camera',
+      kTCCServiceMicrophone: 'Microphone',
+      kTCCServiceAddressBook: 'Contacts',
+      kTCCServiceCalendar: 'Calendars',
+      kTCCServiceReminders: 'Reminders',
+      kTCCServicePhotos: 'Photos',
+      kTCCServiceLocation: 'Location',
+      kTCCServiceBluetoothAlways: 'Bluetooth',
+      kTCCServiceMotion: 'Motion & Fitness',
+      kTCCServiceMediaLibrary: 'Media Library',
+      kTCCServiceFaceID: 'Face ID',
+      kTCCServiceSpeechRecognition: 'Speech Recognition'
+    };
+    return labels[svc] || svc;
+  }
+
+  function accessCategoryLabel(cat) {
+    const labels = {
+      location: 'Location',
+      contacts: 'Contacts',
+      photos: 'Photos',
+      camera: 'Camera',
+      microphone: 'Microphone',
+      motion: 'Motion',
+      media: 'Media'
+    };
+    return labels[cat] || cat;
   }
 
   function topEntries(map, n) {
@@ -416,9 +489,16 @@
     const ctxHits = new Map();
 
     const domainTopApp = new Map();
+    const domainTopOwner = new Map();
     const ownerTopDomain = new Map();
     const appTopDomain = new Map();
     const ctxTopDomain = new Map();
+
+    const domainAppHits = new Map();
+    const domainOwnerHits = new Map();
+    const ownerDomainHits = new Map();
+    const appDomainHits = new Map();
+    const ctxDomainHits = new Map();
 
     // App network: unique domains per app
     const appDomainSets = new Map();     // app -> Set(domains)
@@ -473,6 +553,12 @@
         inc(appsNetHits, app, h);
         if (ctx) inc(ctxHits, ctx, h);
 
+        incNested(domainAppHits, domain, app, h);
+        incNested(domainOwnerHits, domain, owner, h);
+        incNested(ownerDomainHits, owner, domain, h);
+        incNested(appDomainHits, app, domain, h);
+        if (ctx) incNested(ctxDomainHits, ctx, domain, h);
+
         // App network unique domain sets
         if (!appDomainSets.has(app)) appDomainSets.set(app, new Set());
         if (domain) appDomainSets.get(app).add(domain);
@@ -491,37 +577,6 @@
           const cur = websiteTopDomain.get(ctx) || { domain: '', hits: 0 };
           const nextHits = dm.get(domain);
           if (nextHits >= cur.hits) websiteTopDomain.set(ctx, { domain, hits: nextHits });
-        }
-
-        // Top domain per app
-        if (app && domain) {
-          const cur = appTopDomain.get(app) || { domain: '', hits: 0 };
-          const curHits = cur.domain === domain ? cur.hits : 0;
-          const next = curHits + h;
-          if (next >= cur.hits) appTopDomain.set(app, { domain, hits: next });
-        }
-
-        // Top app per domain
-        if (domain) {
-          const cur = domainTopApp.get(domain) || { app: '', hits: 0 };
-          const nextHits = (cur.app === app ? cur.hits : 0) + h;
-          if (nextHits >= cur.hits) domainTopApp.set(domain, { app, hits: nextHits });
-        }
-
-        // Top domain per owner
-        if (owner && domain) {
-          const cur = ownerTopDomain.get(owner) || { domain: '', hits: 0 };
-          const curHits = cur.domain === domain ? cur.hits : 0;
-          const next = curHits + h;
-          if (next >= cur.hits) ownerTopDomain.set(owner, { domain, hits: next });
-        }
-
-        // Top domain per context
-        if (ctx && domain) {
-          const cur = ctxTopDomain.get(ctx) || { domain: '', hits: 0 };
-          const curHits = cur.domain === domain ? cur.hits : 0;
-          const next = curHits + h;
-          if (next >= cur.hits) ctxTopDomain.set(ctx, { domain, hits: next });
         }
 
         continue;
@@ -577,11 +632,32 @@
       skipped++;
     }
 
+    for (const [domain, appHits] of domainAppHits.entries()) {
+      const top = topEntryFromMap(appHits);
+      domainTopApp.set(domain, { app: top.key, hits: top.count });
+    }
+    for (const [domain, ownerHits] of domainOwnerHits.entries()) {
+      const top = topEntryFromMap(ownerHits);
+      domainTopOwner.set(domain, { owner: top.key, hits: top.count });
+    }
+    for (const [owner, domainHits] of ownerDomainHits.entries()) {
+      const top = topEntryFromMap(domainHits);
+      ownerTopDomain.set(owner, { domain: top.key, hits: top.count });
+    }
+    for (const [app, domainHits] of appDomainHits.entries()) {
+      const top = topEntryFromMap(domainHits);
+      appTopDomain.set(app, { domain: top.key, hits: top.count });
+    }
+    for (const [ctx, domainHits] of ctxDomainHits.entries()) {
+      const top = topEntryFromMap(domainHits);
+      ctxTopDomain.set(ctx, { domain: top.key, hits: top.count });
+    }
+
     return {
       netCount, tccCount, accessCount, skipped,
       uniqueApps,
       domainsHits, ownersHits, appsNetHits, ctxHits,
-      domainTopApp, ownerTopDomain, appTopDomain, ctxTopDomain,
+      domainTopApp, domainTopOwner, ownerTopDomain, appTopDomain, ctxTopDomain,
       appDomainSets, appNetTotalHits,
       websiteRecords, websiteHits, websiteTopDomain,
       appsTccEvents, tccServiceEvents, tccServiceTopApp, appTopService,
@@ -601,18 +677,53 @@
     mLinesSub.textContent = `Parsed JSON objects: ${parsed.length.toLocaleString()}`;
 
     mNet.textContent = res.netCount.toLocaleString();
-    mNetSub.textContent = `Unknown/other records ignored: ${res.skipped.toLocaleString()}`;
+    mNetSub.textContent = `type:"networkActivity" lines`;
 
-    mTcc.textContent = res.tccCount.toLocaleString();
-    mTccSub.textContent = `Top window: ${windowDays > 0 ? ('last ' + windowDays + ' days') : 'all time in file'} • access records: ${res.accessCount.toLocaleString()}`;
+    mTcc.textContent = (res.tccCount + res.accessCount).toLocaleString();
+    mTccSub.textContent = `type:"access": ${res.accessCount.toLocaleString()} • stream:*tcc: ${res.tccCount.toLocaleString()}`;
 
     mApps.textContent = res.uniqueApps.size.toLocaleString();
-    mAppsSub.textContent = `Apps seen in net, TCC, or access records`;
+    mAppsSub.textContent = `Window: ${windowDays > 0 ? ('last ' + windowDays + ' days') : 'all time in file'} • other/unknown lines: ${res.skipped.toLocaleString()}`;
+
+    const parsedCount = (res.netCount + res.accessCount + res.tccCount + res.skipped) || 1;
+    const recordTypes = [
+      {
+        type: 'Network activity',
+        count: res.netCount,
+        share: res.netCount / parsedCount,
+        fields: 'type, domain, hits, bundleID, domainOwner, context'
+      },
+      {
+        type: 'Data & sensor access',
+        count: res.accessCount,
+        share: res.accessCount / parsedCount,
+        fields: 'type, category, kind, accessor.identifier'
+      },
+      {
+        type: 'TCC permission stream',
+        count: res.tccCount,
+        share: res.tccCount / parsedCount,
+        fields: 'stream, tccService, accessor.identifier or bundleID'
+      },
+      {
+        type: 'Other / unknown',
+        count: res.skipped,
+        share: res.skipped / parsedCount,
+        fields: 'Unclassified by this dashboard'
+      }
+    ];
+    renderTableRows(tblRecordTypes, recordTypes, [
+      'type',
+      r => safeText(r.count.toLocaleString()),
+      r => `${(r.share * 100).toFixed(1)}%`,
+      r => `<span class="mono">${safeText(r.fields)}</span>`
+    ]);
 
     // Most contacted domains
     const topDomains = topEntries(res.domainsHits, topN).map(([domain, hits]) => {
       const topApp = res.domainTopApp.get(domain)?.app || '';
-      return { domain, hits, owner: '(see Owners table)', topApp };
+      const owner = res.domainTopOwner.get(domain)?.owner || '(unknown owner)';
+      return { domain, hits, owner, topApp };
     });
     renderTableRows(tblDomains, topDomains, [
       r => `<span class="mono">${safeText(r.domain)}</span>`,
@@ -696,7 +807,7 @@
       return { svc, count, topApp: app };
     });
     renderTableRows(tblTcc, topSvc, [
-      r => `<span class="mono">${safeText(r.svc)}</span>`,
+      r => `${safeText(tccServiceLabel(r.svc))}<div class="small mono">${safeText(r.svc)}</div>`,
       r => safeText(r.count.toLocaleString()),
       r => `<span class="mono">${safeText(r.topApp)}</span>`
     ]);
@@ -707,7 +818,7 @@
       return { cat, count, topApp };
     });
     renderTableRows(tblAccessCats, topAccessCats, [
-      r => safeText(r.cat),
+      r => `${safeText(accessCategoryLabel(r.cat))}<div class="small mono">${safeText(r.cat)}</div>`,
       r => safeText(r.count.toLocaleString()),
       r => `<span class="mono">${safeText(r.topApp)}</span>`
     ]);
@@ -810,4 +921,3 @@
 </script>
 </body>
 </html>
-
